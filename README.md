@@ -73,6 +73,34 @@ Changing `sttprovider` always requires a restart.
 | `openai` | OpenAI's hosted Whisper API. Requires `SttApiKey`; audio is uploaded to OpenAI and billed to your key. |
 | `off` (blank) | Disables voice capture entirely - the tap is never installed. |
 
+## Network access & external files
+
+Be aware of what VoxMagica actually does over the network, both as a player and if you're
+distributing it:
+
+- **`local` provider (default):** on first use, the plugin downloads a whisper.cpp speech model
+  (`.bin`, 75 MB-3 GB depending on the chosen size) directly from Hugging Face
+  (`huggingface.co/ggerganov/whisper.cpp`) into `<UserData>/VoxMagicaData/whisper-models/`, and
+  verifies it against a pinned sha256 hash before use. This happens once per model, automatically,
+  in the background - no consent prompt beyond the per-player `/voxmagica voice true` opt-in for
+  voice capture itself. The optional GUI installer can trigger the same download ahead of time
+  instead.
+- **`speaches` provider:** sends captured audio to whatever `SttBaseUrl` points at - normally a
+  server you run yourself, but you're responsible for whatever endpoint you configure.
+- **`openai` provider:** uploads captured audio to OpenAI's API and bills your `SttApiKey`.
+- **`off`:** no network access related to voice at all.
+
+**If you're distributing VoxMagica through a mod platform**, check that platform's current rules
+before listing it - don't take this README's word for it. As one concrete example: CurseForge's
+published Moderation Policies (as of this writing) state, under "Third Party Downloads":
+*"External download links for files are not allowed."* That sentence reads as aimed at a project
+page linking out to download the mod itself from elsewhere, and CurseForge's policy text doesn't
+explicitly address a mod's own runtime network calls after installation - but it's genuinely
+silent on that distinction, not permissive of it. Don't assume the whisper-model download above is
+fine on a given platform; disclose it explicitly in your listing and, if in doubt, ask that
+platform's moderators directly before submitting. This applies to any platform, not just
+CurseForge - Modrinth and others have their own separate policies to check.
+
 ## Building from source
 
 ```
