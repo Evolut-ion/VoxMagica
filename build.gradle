@@ -1,0 +1,372 @@
+plugins {
+    id 'java'
+    id 'org.jetbrains.gradle.plugin.idea-ext' version '1.3'
+    id 'com.gradleup.shadow' version '9.3.1'
+}
+
+
+
+ext {
+    if (project.hasProperty('hytale_home')) {
+        hytaleHome = project.findProperty('hytale_home')
+    } else if (System.getenv('HYTALE_HOME')) {
+        hytaleHome = System.getenv('HYTALE_HOME')
+    } else {
+        def osName = System.getProperty("os.name").toLowerCase()
+        if (osName.contains('win')) {
+            hytaleHome = "${System.getProperty("user.home")}/AppData/Roaming/Hytale"
+        }
+        else if (osName.contains('mac')) {
+            hytaleHome = "${System.getProperty("user.home")}/Library/Application Support/Hytale"
+        }
+        else if (osName.contains('linux')) {
+            hytaleHome = "${System.getProperty("user.home")}/.var/app/com.hypixel.HytaleLauncher/data/Hytale"
+            if (!file(hytaleHome).exists()) {
+                hytaleHome = "${System.getProperty("user.home")}/.local/share/Hytale"
+            }
+        }
+    }
+}
+
+def hytaleHomePath = ext.has('hytaleHome') ? hytaleHome : null
+def hasHytaleHome = (hytaleHomePath != null) && file(hytaleHomePath).exists()
+if (!hasHytaleHome) {
+    logger.lifecycle("Hytale install not detected; run configs that launch the server will be skipped. Set -Phytale_home=/path/to/Hytale to enable them.")
+}
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(java_version)
+    withSourcesJar()
+    withJavadocJar()
+}
+
+// Quiet warnings about missing Javadocs.
+javadoc {
+    options.addStringOption('Xdoclint:-missing', '-quiet')
+}
+
+// Adds the Hytale server as a build dependency, allowing you to reference and
+// compile against their code without bundling it. When a local install is
+// present, we still use its jar for launching the server in IDE run configs.
+//
+// Hexcode is a third-party mod (not published to a Maven repo we can resolve
+// automatically), so it's compiled against via a local jar under libs/ - see
+// that folder's own note. It stays compileOnly for the same reason
+// HytaleServer does: the real Hexcode jar is already present on any server
+// that can actually run this plugin, and bundling it here would cause
+// duplicate/conflicting class definitions.
+// `shadedRuntime` holds only the third-party code that must actually ship inside the deployed
+// mod jar (unlike HytaleServer/Hexcode above, nothing on a Hytale server provides whisper-jni).
+// shadowJar is configured below to bundle *only* this configuration - not the default
+// `runtimeClasspath`, which on a dev box also carries the `runtimeOnly(HytaleServer.jar)` line
+// below (added only so IntelliJ's run config can resolve server classes) and would otherwise
+// get bundled into the shaded jar too, causing the exact duplicate-class problem this file's
+// compileOnly setup exists to avoid.
+configurations {
+    shadedRuntime
+}
+
+dependencies {
+    compileOnly("com.hypixel.hytale:Server:$hytale_build")
+    compileOnly(files("libs/Hexcode-0.9.0-Patch-1.jar"))
+    if (hasHytaleHome) {
+        runtimeOnly(files("$hytaleHome/install/$patchline/package/game/latest/Server/HytaleServer.jar"))
+    }
+
+    // Local (in-process) speech-to-text: JNI bindings to whisper.cpp, ships its own native libs
+    // for Windows/Linux/macOS inside the jar. Must be on the real compile+runtime classpath (not
+    // shadedRuntime-only) so the plugin's own code can call it normally in the IDE/plain `jar`
+    // build too - shadedRuntime just controls what shadowJar additionally bundles.
+    implementation("io.github.givimad:whisper-jni:1.7.1")
+    shadedRuntime("io.github.givimad:whisper-jni:1.7.1")
+
+    // Your dependencies here
+
+    testImplementation(platform("org.junit:junit-bom:5.11.4"))
+    testImplementation("org.junit.jupiter:junit-jupiter")
+    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+}
+
+test {
+    useJUnitPlatform()
+}
+
+repositories {
+    mavenCentral()
+    maven {
+        name = "hytale-release"
+        url = uri("https://maven.hytale.com/release")
+    }
+    maven {
+        name = "hytale-pre-release"
+        url = uri("https://maven.hytale.com/pre-release")
+    }
+    maven {
+        name = "cursemaven"
+        url = uri("https://cursemaven.com")
+    }
+}
+
+def sourceVariant = patchline == 'pre-release' ? 'pre-release' : 'release'
+def artifactVariant = project.findProperty('artifact_suffix') ?: (sourceVariant == 'pre-release' ? 'prerelease' : '')
+def releaseBuildVersion = '0.5.3'
+def prereleaseBuildVersion = '0.5.0-pre.9.1'
+// The shaded (whisper-jni-bundled) jars are what actually get deployed - see deployReleaseMod/
+// deployPrereleaseMod below - not the plain jarRelease/jarPrerelease output.
+def releaseShadedJarName = "${project.name}-${project.version}-release-shaded.jar"
+def prereleaseShadedJarName = "${project.name}-${project.version}-prerelease-shaded.jar"
+
+sourceSets {
+    main {
+        java {
+            srcDir("src/${sourceVariant}/java")
+        }
+    }
+}
+
+// Updates the manifest.json file with the latest properties defined in the
+// build.properties file. Currently we update the version and if packs are
+// included with the plugin.
+tasks.register('updatePluginManifest') {
+    def manifestFile = file('src/main/resources/manifest.json')
+    doLast {
+
+    }
+}
+
+// Makes sure the plugin manifest is up to date.
+// Also strips BOM from all JSON resources so the built JAR is always clean.
+tasks.named('processResources') {
+    dependsOn 'updatePluginManifest'
+    doLast {
+        def resDir = sourceSets.main.output.resourcesDir
+        fileTree(resDir).matching { include '**/*.json' }.each { f ->
+            def bytes = f.bytes
+            if (bytes.length >= 3 && bytes[0] == (byte)0xEF && bytes[1] == (byte)0xBB && bytes[2] == (byte)0xBF) {
+                f.bytes = bytes[3..-1] as byte[]
+                logger.lifecycle("Stripped BOM from: ${f.name}")
+            }
+        }
+    }
+}
+
+tasks.named('jar') {
+    archiveClassifier.set(artifactVariant)
+}
+
+tasks.named('shadowJar') {
+    // Must NOT share a filename with the plain `jar` task's output (which uses the same
+    // artifactVariant classifier) - the Shadow plugin wires `shadowJar` into `assemble`
+    // automatically, so both tasks run in a normal `./gradlew build` and, without a distinct
+    // classifier here, shadowJar's much larger (full-server-bundled) output would silently
+    // overwrite the correct small plugin-only jar at the exact same path in build/libs.
+    archiveClassifier.set(artifactVariant ? "${artifactVariant}-shaded" : "shaded")
+    mergeServiceFiles()
+
+    // Bundle ONLY shadedRuntime (whisper-jni), never the default `runtimeClasspath` - the latter
+    // also carries the dev-box-only `runtimeOnly(HytaleServer.jar)` line above (added purely for
+    // IntelliJ's run config), which would otherwise get bundled into this "deployable" jar and
+    // cause the exact duplicate/conflicting class definitions the compileOnly setup above exists
+    // to avoid, just via shadowJar instead of the plain jar.
+    configurations = [project.configurations.shadedRuntime]
+
+    // Defense in depth: even if a future dependency change accidentally lets Hytale/Hexcode
+    // classes onto shadedRuntime, never let them into the shipped jar.
+    exclude 'com/hypixel/hytale/**'
+    exclude 'com/riprod/**'
+}
+
+def gradleWrapperPath = org.gradle.internal.os.OperatingSystem.current().isWindows()
+        ? file('gradlew.bat').absolutePath
+        : file('gradlew').absolutePath
+
+tasks.register('shadowJarRelease', Exec) {
+    workingDir = projectDir
+    // -Partifact_suffix=release was previously missing here, which left artifactVariant empty
+    // for this task's child Gradle invocation and produced an inconsistently-named
+    // "VoxMagica-<version>-shaded.jar" (no "-release") instead of the intended
+    // "VoxMagica-<version>-release-shaded.jar", symmetric with shadowJarPrerelease below.
+    commandLine gradleWrapperPath, '--no-daemon', '-Partifact_suffix=release', '-Ppatchline=release', "-Phytale_build=${releaseBuildVersion}", 'shadowJar'
+}
+
+tasks.register('shadowJarPrerelease', Exec) {
+    workingDir = projectDir
+    commandLine gradleWrapperPath, '--no-daemon', '-Partifact_suffix=prerelease', '-Ppatchline=pre-release', "-Phytale_build=${prereleaseBuildVersion}", 'shadowJar'
+}
+
+tasks.register('buildRelease') {
+    group = 'build'
+    description = 'Builds the release shaded jar.'
+    dependsOn 'shadowJarRelease'
+}
+
+tasks.register('buildPrerelease') {
+    group = 'build'
+    description = 'Builds the pre-release shaded jar.'
+    dependsOn 'shadowJarPrerelease'
+}
+
+tasks.register('jarRelease', Exec) {
+    group = 'build'
+    description = 'Builds the release jar artifact (no shading).'
+    workingDir = projectDir
+    commandLine gradleWrapperPath, '--no-daemon', '-Partifact_suffix=release', '-Ppatchline=release', "-Phytale_build=${releaseBuildVersion}", 'jar'
+}
+
+tasks.register('jarPrerelease', Exec) {
+    group = 'build'
+    description = 'Builds the pre-release jar artifact (no shading).'
+    workingDir = projectDir
+    commandLine gradleWrapperPath, '--no-daemon', '-Partifact_suffix=prerelease', '-Ppatchline=pre-release', "-Phytale_build=${prereleaseBuildVersion}", 'jar'
+}
+
+// A plain `./gradlew build` must produce the small, plugin-only jar (just this mod's own
+// classes/resources) - NOT the shaded fat jar. HytaleServer.jar is compileOnly (see the
+// `dependencies` block above) precisely so it is never bundled into a deployable mod jar; the
+// server already provides those classes at runtime, and shipping them again causes duplicate/
+// conflicting class definitions against the server's own classloader. `jar` is Gradle's default
+// `build`/`assemble` dependency, so no override is needed here - this block intentionally does
+// NOT add a `shadowJar` dependency. `shadowJar` (the full-server fat jar) still exists and is used
+// deliberately by `runServerJar` below for local dev-server testing, where a self-contained
+// classpath is actually wanted; it is just no longer what a generic `build` produces.
+
+if (hasHytaleHome) {
+    // Create the working directory to run the server if it does not already exist.
+    def serverRunDir = file("$projectDir/run")
+    if (!serverRunDir.exists()) {
+        serverRunDir.mkdirs()
+    }
+
+    def createServerRunArguments = { String srcDir ->
+        def programParameters = '--allow-op --disable-sentry --assets="' + "${hytaleHome}/install/$patchline/package/game/latest/Assets.zip" + '"'
+        def modPaths = []
+        if (includes_pack.toBoolean()) {
+            modPaths << srcDir
+        }
+        if (load_user_mods.toBoolean()) {
+            modPaths << "${hytaleHome}/UserData/Mods"
+        }
+        if (!modPaths.isEmpty()) {
+            programParameters += ' --mods="' + modPaths.join(',') + '"'
+        }
+        return programParameters
+    }
+
+    def serverJar = file("$hytaleHome/install/$patchline/package/game/latest/Server/HytaleServer.jar")
+    def assetsZip = file("$hytaleHome/install/$patchline/package/game/latest/Assets.zip")
+    def shadowJarTask = tasks.named('shadowJar')
+
+    tasks.register('runServerJar', JavaExec) {
+        dependsOn shadowJarTask
+        mainClass = 'com.hypixel.hytale.Main'
+        classpath = files(serverJar)
+        workingDir = serverRunDir.absolutePath
+        doFirst {
+            // --mods expects a directory, not a jar file - stage the shaded jar alone into its
+            // own directory (previously this passed the jar file path directly, which failed
+            // with "Path must be a directory!").
+            def devModsDir = layout.buildDirectory.dir("devMods").get().asFile
+            devModsDir.mkdirs()
+            def shadedJar = shadowJarTask.get().archiveFile.get().asFile
+            copy {
+                from shadedJar
+                into devModsDir
+            }
+            def modPaths = [devModsDir.absolutePath]
+            if (load_user_mods.toBoolean()) {
+                modPaths << "${hytaleHome}/UserData/Mods"
+            }
+            setArgs([
+                    '--allow-op',
+                    '--disable-sentry',
+                    "--assets=${assetsZip}",
+                    "--mods=${modPaths.join(',')}"
+            ])
+        }
+    }
+
+    tasks.register('runServer') {
+        dependsOn 'runServerJar'
+    }
+
+    def installedJarName = "${project.name}-${project.version}.jar"
+
+    tasks.register('deployReleaseMod') {
+        dependsOn 'shadowJarRelease'
+        doLast {
+            def jarFile = layout.buildDirectory.file("libs/${releaseShadedJarName}").get().asFile
+            def modsDir = file("$hytaleHome/UserData/Mods")
+            if (!modsDir.exists()) modsDir.mkdirs()
+            delete(file("$modsDir/${installedJarName}"))
+            copy {
+                from jarFile
+                into modsDir
+                rename { installedJarName }
+            }
+            logger.lifecycle("Deployed ${jarFile.name} -> ${modsDir}/${installedJarName}")
+        }
+    }
+
+    tasks.register('deployPrereleaseMod') {
+        dependsOn 'shadowJarPrerelease'
+        doLast {
+            def jarFile = layout.buildDirectory.file("libs/${prereleaseShadedJarName}").get().asFile
+            def modsDir = file("$hytaleHome/UserData/Mods")
+            if (!modsDir.exists()) modsDir.mkdirs()
+            delete(file("$modsDir/${installedJarName}"))
+            copy {
+                from jarFile
+                into modsDir
+                rename { installedJarName }
+            }
+            logger.lifecycle("Deployed ${jarFile.name} -> ${modsDir}/${installedJarName}")
+        }
+    }
+
+    tasks.register('deployMod') {
+        dependsOn 'deployReleaseMod'
+    }
+
+    // Creates a run configuration in IDEA that will run the Hytale server with
+    // your plugin and the default assets.
+    idea.project.settings.runConfigurations {
+        'HytaleServer'(org.jetbrains.gradle.ext.Application) {
+            mainClass = 'com.hypixel.hytale.Main'
+            moduleName = project.idea.module.name + '.main'
+            programParameters = createServerRunArguments(sourceSets.main.java.srcDirs.first().parentFile.absolutePath)
+            workingDirectory = serverRunDir.absolutePath
+        }
+    }
+
+    // Creates a launch.json file for VSCode with the same configuration
+    tasks.register('generateVSCodeLaunch') {
+        def vscodeDir = file("$projectDir/.vscode")
+        def launchFile = file("$vscodeDir/launch.json")
+        doLast {
+            if (!vscodeDir.exists()) {
+                vscodeDir.mkdirs()
+            }
+            def programParams = createServerRunArguments("\${workspaceFolder}")
+            def launchConfig = [
+                    version: "0.2.0",
+                    configurations: [
+                            [
+                                    type: "java",
+                                    name: "HytaleServer",
+                                    request: "launch",
+                                    mainClass: "com.hypixel.hytale.Main",
+                                    args: programParams,
+                                    cwd: "\${workspaceFolder}/run"
+                            ]
+                    ]
+            ]
+            launchFile.text = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(launchConfig))
+        }
+    }
+} else {
+    tasks.register('generateVSCodeLaunch') {
+        doLast {
+            logger.lifecycle("Skipped VSCode launch configuration because hytale_home is not set or the install path is missing.")
+        }
+    }
+}

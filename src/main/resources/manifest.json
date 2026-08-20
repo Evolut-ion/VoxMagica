@@ -1,0 +1,23 @@
+{
+  "Group": "Ev0sMods",
+  "Name": "VoxMagica",
+  "Version": "0.1.0",
+  "Description": "Voice-cast Hexcode glyphs: speak a glyph's name while casting or drawing and it spawns exactly as if drawn by hand.",
+  "Authors": [
+    {
+      "Name": "OfficialEv0",
+      "Email": "tttdanielak@gmail.com"
+    }
+  ],
+  "Website": "ev0media.com",
+  "ServerVersion": "0.5.x",
+  "Dependencies": {
+    "Riprod:Hexcode": "*"
+  },
+  "OptionalDependencies": {},
+  "LoadBefore": {},
+  "DisabledByDefault": false,
+  "IncludesAssetPack": false,
+  "SubPlugins": [],
+  "Main": "com.ev0smods.voxmagica.VoxMagicaPlugin"
+}

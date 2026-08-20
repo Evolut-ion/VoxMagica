@@ -1,0 +1,32 @@
+# Gradle
+.gradle/
+build/
+run/
+
+# Compiled output that should never be tracked (also catches the stray root-level
+# .class files left over from an old build - see AbstractCommand.class etc.)
+*.class
+
+# IDEs
+.idea/
+*.iml
+.vscode/launch.json
+
+# Third-party dependency jar - deliberately not distributed, see build.gradle's
+# compileOnly comment. Anyone building this project supplies their own copy under libs/.
+libs/*.jar
+
+# PyInstaller build output for setup/launcher.py (see setup/build.bat, setup/build.sh)
+dist/
+setup/build/
+setup/__pycache__/
+setup/resources/
+__pycache__/
+*.pyc
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
